@@ -34,8 +34,10 @@ import {ProgressRing} from '@qualcomm-ui/react/progress-ring';
 
 import {type LevelView, NODE_KIND, type NodeKind} from '~entities/graph';
 import {
+  formatUsecaseDisplay,
   getSystemIdsFromFormattedUsecases,
   type UsecaseCategory,
+  type UsecaseDto,
 } from '~entities/usecases';
 import {
   ApplyDiscardControls,
@@ -48,12 +50,17 @@ import {
   useGraphDesignerStoreShallow,
 } from '~features/graph-designer';
 import {PaletteContainerDeleteDialog} from '~features/graph-designer/ui/palette-container-delete-dialog';
+import {
+  PortConnectionsInfoPopup,
+  usePortConnectionsInfo,
+} from '~features/port-connections-info';
 import {SearchComponent} from '~features/search-component';
 import {
   UsecaseSelectionControl,
   useWorkflowUsecaseData,
 } from '~features/usecase-selection';
 import {
+  type ContextMenuTarget,
   type EdgeConnectPayload,
   type NodeDropPayload,
   type SearchHighlights,
@@ -61,6 +68,7 @@ import {
   UsecaseVisualizer,
   type ViewportState,
   VISUALIZER_MODE,
+  type VisualizerContextMenuConfig,
   type XY,
 } from '~features/usecase-visualizer';
 import {useUserPreferences} from '~shared/config/hooks';
@@ -622,6 +630,63 @@ const GraphDesigner: React.FC<GraphDesignerProps> = ({
   const canUndoRedo = false; // TODO: Support undo/redo stack
 
   const isEditable = useProjectStoreShallow((s) => s.editModeState === 'edit');
+
+  const subgraphList = useGraphDesignerStoreShallow((s) => s.subgraphList);
+
+  const {close, open, state} = usePortConnectionsInfo(projectId);
+
+  const contextMenu = useMemo<VisualizerContextMenuConfig>(
+    () => ({
+      getItems: (target: ContextMenuTarget) => {
+        if (target.kind !== 'port') {
+          return [];
+        }
+        const activeLinks = target.port.activeLinks ?? 0;
+        const totalLinks = target.port.totalLinks ?? 0;
+        if (activeLinks >= totalLinks) {
+          return [];
+        }
+        return [{id: 'show-all-connections', label: 'Show all connections'}];
+      },
+      onAction: (actionId: string, target: ContextMenuTarget) => {
+        if (actionId === 'show-all-connections' && target.kind === 'port') {
+          open(target.nodeId, target.port);
+        }
+      },
+    }),
+    [open],
+  );
+
+  const isPortConnectionsPopupOpen =
+    state.status === 'loading-modules' ||
+    state.status === 'ready' ||
+    state.status === 'error';
+
+  const subgraphBySystemId = useMemo(
+    () => new Map(subgraphList.map((sg) => [sg.systemId, sg])),
+    [subgraphList],
+  );
+
+  const resolveSubgraphDisplay = useCallback(
+    (subgraphSystemId: string) =>
+      subgraphBySystemId.get(subgraphSystemId)?.subgraphId ?? subgraphSystemId,
+    [subgraphBySystemId],
+  );
+
+  const handleAddUsecases = useCallback(
+    (usecases: UsecaseDto[]) => {
+      const formatted = usecases.map(formatUsecaseDisplay);
+      setSelectedUsecases([...new Set([...selectedUsecases, ...formatted])]);
+    },
+    [selectedUsecases, setSelectedUsecases],
+  );
+
+  const handleNavigateUsecases = useCallback(
+    (usecases: UsecaseDto[]) => {
+      setSelectedUsecases(usecases.map(formatUsecaseDisplay));
+    },
+    [setSelectedUsecases],
+  );
 
   const handleModuleDoubleClick = useCallback(
     async (nodeId: string, nodeKind: NodeKind, label: string) => {
@@ -1225,6 +1290,37 @@ const GraphDesigner: React.FC<GraphDesignerProps> = ({
           </div>,
           document.body,
         )}
+      {state.status === 'loading-links' &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[9999] flex items-center justify-center backdrop-blur-sm"
+            style={{
+              backgroundColor:
+                'color-mix(in oklab, var(--color-surface-overlay) 50%, transparent)',
+            }}
+          >
+            <div className="bg-raised rounded-lg p-8 shadow-xl">
+              <div className="text-center">
+                <div className="mb-4 flex justify-center">
+                  <ProgressRing />
+                </div>
+                <div className="text-neutral-primary mb-2 text-lg font-semibold">
+                  Loading connections…
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+      <PortConnectionsInfoPopup
+        isReadonly={!isEditable}
+        onAdd={handleAddUsecases}
+        onClose={close}
+        onNavigate={handleNavigateUsecases}
+        open={isPortConnectionsPopupOpen}
+        resolveSubgraphDisplay={resolveSubgraphDisplay}
+        state={state}
+      />
       {/* Usecase Selection Control at the top */}
       <div className="bg-primary border-neutral-02 flex-shrink-0 border-b p-4">
         <div className="flex items-center gap-4">
@@ -1317,6 +1413,7 @@ const GraphDesigner: React.FC<GraphDesignerProps> = ({
           </>
         ) : levelView ? (
           <UsecaseVisualizer
+            contextMenu={contextMenu}
             eventHandlers={eventHandlers}
             focusNodeRequest={focusNodeRequest}
             graph={graph}

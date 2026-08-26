@@ -830,13 +830,22 @@ function VisualizerCanvas({
       {openMenu ? (
         <Portal>
           <Menu.Root
-            anchorPoint={{x: openMenu.x, y: openMenu.y}}
             onOpenChange={(open) => {
               if (!open) {
                 setOpenMenu(null);
               }
             }}
             open
+            positioning={{
+              getAnchorRect: () => ({
+                height: 0,
+                width: 0,
+                x: openMenu.x,
+                y: openMenu.y,
+              }),
+              gutter: 0,
+              placement: 'bottom-start',
+            }}
           >
             <Menu.Positioner>
               <Menu.Content>
